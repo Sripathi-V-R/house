@@ -4,9 +4,9 @@ import numpy as np
 import joblib
 import matplotlib.pyplot as plt
 from fpdf import FPDF
-import io
 from datetime import datetime
 import tempfile
+import os
 
 # -----------------------------
 # Paths
@@ -33,35 +33,39 @@ categorical_cols = ['Locality', 'Sale_Condition', 'Parking_Facility',
 numeric_cols = ['Interior_SqFt', 'Distance_To_Main_Road', 'Num_Bedrooms', 'Num_Bathrooms',
                 'Total_Rooms', 'Quality_Score_Rooms', 'Quality_Score_Bathroom', 
                 'Quality_Score_Bedroom', 'Quality_Score_Overall', 'Registration_Fee', 
-                'Commission', 'Sale_Year', 'Build_Year', 'Building_Age']
+                'Commission', 'Sale_Year', 'Build_Year']
 
 # -----------------------------
 # Sidebar inputs
 st.sidebar.header("🏠 House Details Input")
 user_input = {}
 
-# Use unique values from raw dataset for options
+# Categorical inputs
 for col in categorical_cols:
     options = raw_data[col].unique().tolist()
     user_input[col] = st.sidebar.selectbox(col, options)
 
+# Numeric inputs
 for col in numeric_cols:
     default = int(raw_data[col].median())
     user_input[col] = st.sidebar.number_input(col, value=default)
+
+# Calculate Building Age from Build_Year
+user_input['Building_Age'] = user_input['Sale_Year'] - user_input['Build_Year']
 
 # -----------------------------
 # Encode categorical features
 input_encoded = {col: label_encoders[col].transform([user_input[col]])[0] for col in categorical_cols}
 
 # Merge numeric inputs (no scaling)
-for col in numeric_cols:
-    input_encoded[col] = user_input[col]
+for col in numeric_cols + ['Building_Age']:
+    input_encoded[col] = user_input.get(col, 0)
 
 # Prepare input dataframe
-input_df = pd.DataFrame([input_encoded], columns=categorical_cols + numeric_cols)
+input_df = pd.DataFrame([input_encoded], columns=categorical_cols + numeric_cols + ['Building_Age'])
 
 # -----------------------------
-# Predict continuously
+# Predict
 prediction = model.predict(input_df)[0]
 
 # -----------------------------
@@ -70,8 +74,15 @@ st.subheader("💰 Predicted House Price")
 st.success(f"{prediction:,.2f} INR")
 
 # -----------------------------
+# Show selected inputs side by side
+st.subheader("📝 Selected Inputs")
+cols = st.columns(2)
+for i, (k, v) in enumerate(user_input.items()):
+    with cols[i % 2]:
+        st.write(f"**{k}:** {v}")
+
+# -----------------------------
 # Feature bar chart
-st.subheader("🏘️ House Features Overview")
 features_plot = ['Interior_SqFt', 'Num_Bedrooms', 'Num_Bathrooms', 'Total_Rooms']
 values_plot = [user_input[f] for f in features_plot]
 
@@ -84,12 +95,11 @@ st.pyplot(fig)
 
 # -----------------------------
 # Radar chart for quality scores
-st.subheader("📊 Quality Scores Radar")
 quality_scores = ['Quality_Score_Rooms', 'Quality_Score_Bathroom', 'Quality_Score_Bedroom', 'Quality_Score_Overall']
 scores = [user_input[q] for q in quality_scores]
 
 angles = np.linspace(0, 2 * np.pi, len(scores), endpoint=False).tolist()
-scores += scores[:1]  # Close the loop
+scores += scores[:1]  # close loop
 angles += angles[:1]
 
 fig2, ax2 = plt.subplots(figsize=(5, 5), subplot_kw=dict(polar=True))
@@ -99,17 +109,18 @@ ax2.set_xticks(angles[:-1])
 ax2.set_xticklabels(quality_scores)
 ax2.set_yticks([1, 3, 5])
 ax2.set_yticklabels(["Low", "Medium", "High"])
+st.subheader("📊 Quality Scores Radar")
 st.pyplot(fig2)
 
 # -----------------------------
-# Generate PDF report using built-in fonts
+# Generate PDF report using temp files for charts
 def generate_pdf(user_input, predicted_price, bar_fig, radar_fig):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", "B", 16)
     pdf.cell(0, 10, "Chennai House Price Prediction Report", ln=True, align="C")
     pdf.ln(4)
-    
+
     # House details
     pdf.set_font("Arial", "B", 12)
     pdf.cell(0, 8, "House Details:", ln=True)
@@ -117,35 +128,38 @@ def generate_pdf(user_input, predicted_price, bar_fig, radar_fig):
     for k, v in user_input.items():
         pdf.multi_cell(0, 7, f"{k}: {v}")
     pdf.ln(2)
-    
+
     # Predicted price
     pdf.set_font("Arial", "B", 12)
     pdf.cell(0, 8, f"Predicted House Price: {predicted_price:,.2f} INR", ln=True)
-    
-    # Insert bar chart
-    buf_bar = io.BytesIO()
-    bar_fig.savefig(buf_bar, format='PNG', dpi=180, bbox_inches='tight')
-    buf_bar.seek(0)
+
+    # Save bar chart to temp file
+    tmp_bar = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+    bar_fig.savefig(tmp_bar.name, dpi=180, bbox_inches='tight')
+    tmp_bar.close()
     pdf.ln(4)
-    pdf.image(buf_bar, x=20, w=170)
-    
-    # Insert radar chart
-    buf_radar = io.BytesIO()
-    radar_fig.savefig(buf_radar, format='PNG', dpi=180, bbox_inches='tight')
-    buf_radar.seek(0)
+    pdf.image(tmp_bar.name, x=20, w=170)
+    os.unlink(tmp_bar.name)
+
+    # Save radar chart to temp file
+    tmp_radar = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+    radar_fig.savefig(tmp_radar.name, dpi=180, bbox_inches='tight')
+    tmp_radar.close()
     pdf.ln(4)
-    pdf.image(buf_radar, x=40, w=130)
-    
+    pdf.image(tmp_radar.name, x=40, w=130)
+    os.unlink(tmp_radar.name)
+
     # Footer
     pdf.ln(5)
     pdf.set_font("Arial", "I", 10)
     pdf.multi_cell(0, 6, "This is an auto-generated report for reference purposes only.")
-    
+
     temp_pdf = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
     pdf.output(temp_pdf.name)
     temp_pdf.seek(0)
     with open(temp_pdf.name, "rb") as f:
         pdf_bytes = f.read()
+    os.unlink(temp_pdf.name)
     return pdf_bytes
 
 pdf_bytes = generate_pdf(user_input, prediction, fig, fig2)
