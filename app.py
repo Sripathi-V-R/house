@@ -12,7 +12,7 @@ import os
 # Paths
 MODEL_PATH = "catboost_model.pkl"
 ENCODERS_PATH = "label_encoders.pkl"
-PREPROCESSED_PATH = "preprocessed.csv"  # Raw dataset before encoding
+PREPROCESSED_PATH = "preprocessed.csv"
 
 # -----------------------------
 # Load artifacts
@@ -42,23 +42,22 @@ user_input = {}
 # Categorical inputs
 for col in categorical_cols:
     options = raw_data[col].unique().tolist()
-    user_input[col] = st.sidebar.selectbox(col, options)
+    user_input[col] = st.sidebar.selectbox(col, options, key=col)
 
 # Manual numeric inputs
 for col in manual_numeric_cols:
-    user_input[col] = st.sidebar.number_input(col, value=int(raw_data[col].median()))
+    user_input[col] = st.sidebar.number_input(col, value=int(raw_data[col].median()), key=col)
 
 # Other numeric inputs
 for col in other_numeric_cols:
-    user_input[col] = st.sidebar.number_input(col, value=int(raw_data[col].median()))
+    user_input[col] = st.sidebar.number_input(col, value=int(raw_data[col].median()), key=col)
 
-# Calculate Building Age
+# Building Age
 user_input['Building_Age'] = user_input['Sale_Year'] - user_input['Build_Year']
 
 # -----------------------------
 # Encode categorical
 input_encoded = {col: label_encoders[col].transform([user_input[col]])[0] for col in categorical_cols}
-
 for col in manual_numeric_cols + other_numeric_cols + ['Building_Age']:
     input_encoded[col] = user_input[col]
 
@@ -81,36 +80,46 @@ for i, (k, v) in enumerate(user_input.items()):
 
 # -----------------------------
 # Charts
+st.subheader("Property Feature Charts")
+
+# Bar Chart
 features_plot = ['Interior_SqFt', 'Num_Bedrooms', 'Num_Bathrooms', 'Total_Rooms']
 values_plot = [user_input[f] for f in features_plot]
 
-fig, ax = plt.subplots(figsize=(8, 4))
-ax.bar(features_plot, values_plot, color='skyblue')
-ax.set_ylabel("Value")
-ax.set_title("Key House Features")
-plt.tight_layout()
-st.pyplot(fig)
+fig_bar, ax_bar = plt.subplots(figsize=(8, 4))
+ax_bar.bar(features_plot, values_plot, color='dodgerblue')
+ax_bar.set_ylabel("Value")
+ax_bar.set_title("Key House Features")
+st.pyplot(fig_bar, clear_figure=True)
 
+# Radar Chart
 quality_scores = ['Quality_Score_Rooms', 'Quality_Score_Bathroom', 'Quality_Score_Bedroom', 'Quality_Score_Overall']
 scores = [user_input[q] for q in quality_scores]
-
 angles = np.linspace(0, 2 * np.pi, len(scores), endpoint=False).tolist()
 scores += scores[:1]
 angles += angles[:1]
 
-fig2, ax2 = plt.subplots(figsize=(5, 5), subplot_kw=dict(polar=True))
-ax2.plot(angles, scores, 'o-', linewidth=2)
-ax2.fill(angles, scores, alpha=0.25)
-ax2.set_xticks(angles[:-1])
-ax2.set_xticklabels(quality_scores)
-ax2.set_yticks([1, 3, 5])
-ax2.set_yticklabels(["Low", "Medium", "High"])
-st.subheader("Quality Scores Radar")
-st.pyplot(fig2)
+fig_radar, ax_radar = plt.subplots(figsize=(5, 5), subplot_kw=dict(polar=True))
+ax_radar.plot(angles, scores, 'o-', linewidth=2, color='green')
+ax_radar.fill(angles, scores, alpha=0.25, color='green')
+ax_radar.set_xticks(angles[:-1])
+ax_radar.set_xticklabels(quality_scores)
+ax_radar.set_yticks([1, 3, 5])
+ax_radar.set_yticklabels(["Low", "Medium", "High"])
+st.pyplot(fig_radar, clear_figure=True)
+
+# Optional: Pie chart for room distribution
+st.subheader("Room Distribution")
+rooms = [user_input['Num_Bedrooms'], user_input['Num_Bathrooms'], user_input['Total_Rooms'] - (user_input['Num_Bedrooms'] + user_input['Num_Bathrooms'])]
+labels = ['Bedrooms', 'Bathrooms', 'Other Rooms']
+fig_pie, ax_pie = plt.subplots()
+ax_pie.pie(rooms, labels=labels, autopct='%1.1f%%', colors=['skyblue', 'orange', 'lightgreen'])
+ax_pie.set_title("Room Distribution")
+st.pyplot(fig_pie, clear_figure=True)
 
 # -----------------------------
-# Generate professional PDF
-def generate_professional_pdf(user_input, predicted_price, bar_fig, radar_fig):
+# PDF Report
+def generate_professional_pdf(user_input, predicted_price, bar_fig, radar_fig, pie_fig):
     pdf = FPDF('P', 'mm', 'A4')
     pdf.add_page()
 
@@ -128,7 +137,7 @@ def generate_professional_pdf(user_input, predicted_price, bar_fig, radar_fig):
     pdf.cell(0, 5, f"Report Date: {datetime.now().strftime('%d-%m-%Y')}", ln=True)
     pdf.ln(5)
 
-    # Property Information Table
+    # Property Information
     pdf.set_font("Arial", "B", 12)
     pdf.cell(0, 6, "Property Information", ln=True)
     pdf.set_font("Arial", "", 11)
@@ -145,31 +154,26 @@ def generate_professional_pdf(user_input, predicted_price, bar_fig, radar_fig):
     # Description / Suggestions
     pdf.set_font("Arial", "", 11)
     description = (
-        "This valuation report is generated based on the selected property features and model prediction.\n\n"
+        "This valuation report is generated based on selected property features.\n\n"
         "The predicted price represents an estimated market value considering property size, quality, "
         "location, and sale conditions.\n\n"
         "Suggestions:\n"
-        "- Ensure the property condition matches the quality scores provided.\n"
+        "- Ensure property condition matches the quality scores.\n"
         "- Consider local market trends and amenities when finalizing pricing.\n"
-        "- Commission and registration fees are based on typical rates.\n"
+        "- Registration fee and commission are typical estimates.\n"
         "- Distance to main road can influence accessibility and valuation."
     )
     pdf.multi_cell(0, 6, description)
     pdf.ln(3)
 
-    # Insert bar chart
-    tmp_bar = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
-    bar_fig.savefig(tmp_bar.name, dpi=180, bbox_inches='tight')
-    tmp_bar.close()
-    pdf.image(tmp_bar.name, x=20, w=170)
-    os.unlink(tmp_bar.name)
-
-    # Insert radar chart
-    tmp_radar = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
-    radar_fig.savefig(tmp_radar.name, dpi=180, bbox_inches='tight')
-    tmp_radar.close()
-    pdf.image(tmp_radar.name, x=40, w=130)
-    os.unlink(tmp_radar.name)
+    # Insert charts
+    for fig, width in zip([bar_fig, radar_fig, pie_fig], [170, 130, 150]):
+        tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+        fig.savefig(tmp_file.name, dpi=180, bbox_inches='tight')
+        tmp_file.close()
+        pdf.image(tmp_file.name, x=20, w=width)
+        os.unlink(tmp_file.name)
+        pdf.ln(5)
 
     # Footer
     pdf.set_y(-20)
@@ -184,11 +188,11 @@ def generate_professional_pdf(user_input, predicted_price, bar_fig, radar_fig):
     os.unlink(temp_pdf.name)
     return pdf_bytes
 
-# -----------------------------
-pdf_bytes = generate_professional_pdf(user_input, prediction, fig, fig2)
+# Generate PDF
+pdf_bytes = generate_professional_pdf(user_input, prediction, fig_bar, fig_radar, fig_pie)
 
 # Download button
-st.subheader("Download Valuation Report")
+st.subheader("Download Professional Valuation Report")
 st.download_button(
     label="Download PDF Report",
     data=pdf_bytes,
