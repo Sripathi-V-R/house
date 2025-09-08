@@ -39,6 +39,8 @@ page = st.sidebar.radio("Navigation", ["Prediction", "Charts", "Insights", "Repo
 # Initialize user input dictionary
 if "user_input" not in st.session_state:
     st.session_state.user_input = {col: None for col in categorical_cols + numeric_cols_manual + numeric_cols_other}
+    for col in numeric_cols_manual + numeric_cols_other:
+        st.session_state.user_input[col] = 0
 
 # -----------------------------
 # Function to validate input
@@ -54,14 +56,47 @@ def input_section():
     st.header("🏠 Enter House Details")
     for col in categorical_cols:
         options = ["--Select--"] + list(raw_data[col].unique())
-        st.session_state.user_input[col] = st.selectbox(col, options, index=0, key=col)
+        selected = st.selectbox(col, options, index=0, key=col)
+        st.session_state.user_input[col] = selected if selected != "--Select--" else None
     
     for col in numeric_cols_manual + numeric_cols_other:
-        st.session_state.user_input[col] = st.number_input(col, value=int(raw_data[col].median()), key=col)
+        st.session_state.user_input[col] = st.number_input(col, value=st.session_state.user_input[col], key=col)
 
     # Auto-calculate building age
     if st.session_state.user_input["Build_Year"] and st.session_state.user_input["Sale_Year"]:
-        st.session_state.user_input["Building_Age"] = st.session_state.user_input["Sale_Year"] - st.session_state.user_input["Build_Year"]
+        st.session_state.user_input["Building_Age"] = max(st.session_state.user_input["Sale_Year"] - st.session_state.user_input["Build_Year"], 0)
+    else:
+        st.session_state.user_input["Building_Age"] = 0
+
+# -----------------------------
+# Function to create charts dynamically
+def create_charts(user_input):
+    # Bar Chart
+    features_plot = ['Interior_SqFt', 'Num_Bedrooms', 'Num_Bathrooms', 'Total_Rooms']
+    values_plot = [user_input[f] for f in features_plot]
+
+    fig_bar, ax_bar = plt.subplots(figsize=(8, 4))
+    ax_bar.bar(features_plot, values_plot, color='#1f77b4', edgecolor='black')
+    ax_bar.set_ylabel("Value")
+    ax_bar.set_title("Key House Features")
+    plt.tight_layout()
+
+    # Radar Chart
+    quality_scores = ['Quality_Score_Rooms', 'Quality_Score_Bathroom', 'Quality_Score_Bedroom', 'Quality_Score_Overall']
+    scores = [user_input[q] for q in quality_scores]
+    angles = np.linspace(0, 2 * np.pi, len(scores), endpoint=False).tolist()
+    scores += scores[:1]
+    angles += angles[:1]
+
+    fig_radar, ax_radar = plt.subplots(figsize=(5, 5), subplot_kw=dict(polar=True))
+    ax_radar.plot(angles, scores, 'o-', linewidth=2, color='#ff7f0e')
+    ax_radar.fill(angles, scores, alpha=0.25, color='#ff7f0e')
+    ax_radar.set_xticks(angles[:-1])
+    ax_radar.set_xticklabels(quality_scores)
+    ax_radar.set_yticks([1, 3, 5])
+    ax_radar.set_yticklabels(["Low", "Medium", "High"])
+    plt.tight_layout()
+    return fig_bar, fig_radar
 
 # -----------------------------
 # Page: Prediction
@@ -80,36 +115,6 @@ if page == "Prediction":
         st.warning("Please select/fill all required fields above to see prediction.")
 
 # -----------------------------
-# Function to create charts dynamically
-def create_charts(user_input):
-    # Bar Chart
-    features_plot = ['Interior_SqFt', 'Num_Bedrooms', 'Num_Bathrooms', 'Total_Rooms']
-    values_plot = [user_input[f] for f in features_plot]
-
-    fig_bar, ax_bar = plt.subplots(figsize=(8, 4))
-    ax_bar.bar(features_plot, values_plot, color='dodgerblue')
-    ax_bar.set_ylabel("Value")
-    ax_bar.set_title("Key House Features")
-    plt.tight_layout()
-
-    # Radar Chart
-    quality_scores = ['Quality_Score_Rooms', 'Quality_Score_Bathroom', 'Quality_Score_Bedroom', 'Quality_Score_Overall']
-    scores = [user_input[q] for q in quality_scores]
-    angles = np.linspace(0, 2 * np.pi, len(scores), endpoint=False).tolist()
-    scores += scores[:1]
-    angles += angles[:1]
-
-    fig_radar, ax_radar = plt.subplots(figsize=(5, 5), subplot_kw=dict(polar=True))
-    ax_radar.plot(angles, scores, 'o-', linewidth=2, color='green')
-    ax_radar.fill(angles, scores, alpha=0.25, color='green')
-    ax_radar.set_xticks(angles[:-1])
-    ax_radar.set_xticklabels(quality_scores)
-    ax_radar.set_yticks([1, 3, 5])
-    ax_radar.set_yticklabels(["Low", "Medium", "High"])
-    plt.tight_layout()
-    return fig_bar, fig_radar
-
-# -----------------------------
 # Page: Charts
 if page == "Charts":
     input_section()
@@ -126,13 +131,14 @@ if page == "Insights":
     input_section()
     st.subheader("📈 Insights & Suggestions")
     if validate_inputs(st.session_state.user_input):
-        # Example insights
-        st.write(f"- The predicted price for this property is influenced by **{st.session_state.user_input['Interior_SqFt']} sq.ft** interior, {st.session_state.user_input['Num_Bedrooms']} bedrooms, and {st.session_state.user_input['Num_Bathrooms']} bathrooms.")
-        st.write("- Quality scores suggest areas for improvement:")
+        st.markdown("### 🔍 Key Insights")
+        st.write(f"- **Interior Space:** {st.session_state.user_input['Interior_SqFt']} sq.ft, consider increasing usable area to improve valuation.")
+        st.write(f"- **Bedrooms & Bathrooms:** {st.session_state.user_input['Num_Bedrooms']} bedrooms, {st.session_state.user_input['Num_Bathrooms']} bathrooms. Balanced number improves resale value.")
+        st.write(f"- **Quality Scores:**")
         for score in ['Quality_Score_Rooms', 'Quality_Score_Bathroom', 'Quality_Score_Bedroom', 'Quality_Score_Overall']:
             st.write(f"  - {score}: {st.session_state.user_input[score]}")
-        st.write("- Properties closer to main road tend to have higher accessibility and market value.")
-        st.write("- Ensure registration fees and commission align with local market trends.")
+        st.write(f"- **Proximity:** {st.session_state.user_input['Distance_To_Main_Road']} meters from main road; closer improves marketability.")
+        st.write(f"- **Financials:** Registration Fee {st.session_state.user_input['Registration_Fee']}, Commission {st.session_state.user_input['Commission']}")
     else:
         st.warning("Please fill all inputs to see insights.")
 
@@ -144,22 +150,38 @@ if page == "Report":
     if validate_inputs(st.session_state.user_input):
         fig_bar, fig_radar = create_charts(st.session_state.user_input)
 
-        def generate_pdf(user_input, bar_fig, radar_fig):
+        def generate_pdf(user_input, bar_fig, radar_fig, prediction):
             pdf = FPDF('P', 'mm', 'A4')
             pdf.add_page()
+            # Header
+            pdf.set_fill_color(0, 102, 204)  # Blue header
+            pdf.rect(0, 0, 210, 20, 'F')
+            pdf.set_xy(0, 5)
             pdf.set_font("Arial", "B", 16)
-            pdf.cell(0, 10, "Sunrise Property Valuation Agency", ln=True, align="C")
-            pdf.set_font("Arial", "", 11)
-            pdf.cell(0, 5, "Professional House Valuation Report", ln=True, align="C")
+            pdf.set_text_color(255, 255, 255)
+            pdf.cell(210, 10, "Sunrise Property Valuation Agency", 0, 1, 'C')
+            
             pdf.ln(5)
+            pdf.set_text_color(0, 0, 0)
+            pdf.set_font("Arial", "B", 14)
+            pdf.cell(0, 10, "Professional House Valuation Report", ln=True, align="C")
+            pdf.ln(5)
+            
             # Property info
             pdf.set_font("Arial", "B", 12)
-            pdf.cell(0, 6, "Property Information", ln=True)
+            pdf.cell(0, 8, "Property Information", ln=True)
             pdf.set_font("Arial", "", 11)
             for k, v in user_input.items():
                 pdf.cell(60, 6, f"{k}", border=1)
                 pdf.cell(0, 6, f"{v}", border=1, ln=True)
-            pdf.ln(4)
+            pdf.ln(5)
+            
+            # Prediction Box
+            pdf.set_fill_color(255, 204, 0)
+            pdf.set_font("Arial", "B", 14)
+            pdf.cell(0, 10, f"💰 Predicted Price: {prediction:,.2f} INR", ln=True, fill=True, align="C")
+            pdf.ln(5)
+            
             # Charts
             for fig, width in zip([bar_fig, radar_fig], [170, 130]):
                 tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
@@ -168,10 +190,22 @@ if page == "Report":
                 pdf.image(tmp_file.name, x=20, w=width)
                 os.unlink(tmp_file.name)
                 pdf.ln(5)
+            
+            # Insights Section
+            pdf.set_font("Arial", "B", 12)
+            pdf.cell(0, 8, "Insights & Suggestions", ln=True)
+            pdf.set_font("Arial", "", 11)
+            pdf.multi_cell(0, 6, f"- Interior Space: {user_input['Interior_SqFt']} sq.ft. Consider increasing usable area.\n"
+                                  f"- Bedrooms/Bathrooms: {user_input['Num_Bedrooms']} / {user_input['Num_Bathrooms']}. Balanced number improves resale value.\n"
+                                  f"- Quality Scores: Rooms {user_input['Quality_Score_Rooms']}, Bathroom {user_input['Quality_Score_Bathroom']}, Bedroom {user_input['Quality_Score_Bedroom']}, Overall {user_input['Quality_Score_Overall']}.\n"
+                                  f"- Distance from Main Road: {user_input['Distance_To_Main_Road']} meters.\n"
+                                  f"- Registration Fee: {user_input['Registration_Fee']}, Commission: {user_input['Commission']}.")
+
             # Footer
             pdf.set_y(-20)
             pdf.set_font("Arial", "I", 10)
             pdf.cell(0, 6, "Sunrise Property Valuation Agency", align="C")
+            
             temp_pdf = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
             pdf.output(temp_pdf.name)
             temp_pdf.seek(0)
@@ -180,7 +214,14 @@ if page == "Report":
             os.unlink(temp_pdf.name)
             return pdf_bytes
 
-        pdf_bytes = generate_pdf(st.session_state.user_input, fig_bar, fig_radar)
+        # Generate and download PDF
+        input_encoded = {col: label_encoders[col].transform([st.session_state.user_input[col]])[0] for col in categorical_cols}
+        for col in numeric_cols_manual + numeric_cols_other + ["Building_Age"]:
+            input_encoded[col] = st.session_state.user_input[col]
+        input_df = pd.DataFrame([input_encoded], columns=categorical_cols + numeric_cols_manual + numeric_cols_other + ["Building_Age"])
+        prediction = model.predict(input_df)[0]
+
+        pdf_bytes = generate_pdf(st.session_state.user_input, fig_bar, fig_radar, prediction)
         st.download_button(
             label="Download PDF Report",
             data=pdf_bytes,
