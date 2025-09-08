@@ -21,67 +21,66 @@ label_encoders = joblib.load(ENCODERS_PATH)
 raw_data = pd.read_csv(PREPROCESSED_PATH)
 
 # -----------------------------
-# Streamlit layout
-st.set_page_config(page_title="Chennai House Price Prediction", layout="wide")
-st.title("🏠 Chennai House Price Prediction - Valuation Report")
-
+# Columns
 categorical_cols = ['Locality', 'Sale_Condition', 'Parking_Facility', 
                     'Building_Type', 'Utilities_Available', 'Street_Type', 'Zoning_Type']
 
-manual_numeric_cols = ['Registration_Fee', 'Commission', 'Sale_Year', 'Build_Year', 'Interior_SqFt', 'Distance_To_Main_Road']
-
-other_numeric_cols = ['Num_Bedrooms', 'Num_Bathrooms', 'Total_Rooms',
+numeric_cols_manual = ['Registration_Fee', 'Commission', 'Sale_Year', 'Build_Year', 'Interior_SqFt', 'Distance_To_Main_Road']
+numeric_cols_other = ['Num_Bedrooms', 'Num_Bathrooms', 'Total_Rooms',
                       'Quality_Score_Rooms', 'Quality_Score_Bathroom', 
                       'Quality_Score_Bedroom', 'Quality_Score_Overall']
 
 # -----------------------------
-# Sidebar inputs
-st.sidebar.header("House Details Input")
-user_input = {}
-
-# Categorical inputs
-for col in categorical_cols:
-    options = raw_data[col].unique().tolist()
-    user_input[col] = st.sidebar.selectbox(col, options, key=col)
-
-# Manual numeric inputs
-for col in manual_numeric_cols:
-    user_input[col] = st.sidebar.number_input(col, value=int(raw_data[col].median()), key=col)
-
-# Other numeric inputs
-for col in other_numeric_cols:
-    user_input[col] = st.sidebar.number_input(col, value=int(raw_data[col].median()), key=col)
-
-# Calculate building age
-user_input['Building_Age'] = user_input['Sale_Year'] - user_input['Build_Year']
+# Streamlit page selection
+st.set_page_config(page_title="Chennai House Valuation", layout="wide")
+page = st.sidebar.radio("Navigation", ["Prediction", "Charts", "Insights", "Report"])
 
 # -----------------------------
-# Encode categorical
-input_encoded = {col: label_encoders[col].transform([user_input[col]])[0] for col in categorical_cols}
-for col in manual_numeric_cols + other_numeric_cols + ['Building_Age']:
-    input_encoded[col] = user_input[col]
-
-input_df = pd.DataFrame([input_encoded], columns=categorical_cols + manual_numeric_cols + other_numeric_cols + ['Building_Age'])
-
-# Prediction
-prediction = model.predict(input_df)[0]
+# Initialize user input dictionary
+if "user_input" not in st.session_state:
+    st.session_state.user_input = {col: None for col in categorical_cols + numeric_cols_manual + numeric_cols_other}
 
 # -----------------------------
-# Display prediction
-st.subheader("💰 Predicted House Price")
-st.success(f"{prediction:,.2f} INR")
-
-# Display selected inputs side by side
-st.subheader("Selected Inputs")
-cols = st.columns(2)
-for i, (k, v) in enumerate(user_input.items()):
-    with cols[i % 2]:
-        st.write(f"**{k}:** {v}")
+# Function to validate input
+def validate_inputs(inputs):
+    for k, v in inputs.items():
+        if v is None or (isinstance(v, str) and v.strip() == ""):
+            return False
+    return True
 
 # -----------------------------
-# Section for charts
-st.subheader("📊 Charts - Feature Overview and Quality Scores")
+# Input Section
+def input_section():
+    st.header("🏠 Enter House Details")
+    for col in categorical_cols:
+        options = ["--Select--"] + list(raw_data[col].unique())
+        st.session_state.user_input[col] = st.selectbox(col, options, index=0, key=col)
+    
+    for col in numeric_cols_manual + numeric_cols_other:
+        st.session_state.user_input[col] = st.number_input(col, value=int(raw_data[col].median()), key=col)
 
+    # Auto-calculate building age
+    if st.session_state.user_input["Build_Year"] and st.session_state.user_input["Sale_Year"]:
+        st.session_state.user_input["Building_Age"] = st.session_state.user_input["Sale_Year"] - st.session_state.user_input["Build_Year"]
+
+# -----------------------------
+# Page: Prediction
+if page == "Prediction":
+    input_section()
+    st.subheader("💰 Predicted House Price")
+    if validate_inputs(st.session_state.user_input):
+        # Encode categorical
+        input_encoded = {col: label_encoders[col].transform([st.session_state.user_input[col]])[0] for col in categorical_cols}
+        for col in numeric_cols_manual + numeric_cols_other + ["Building_Age"]:
+            input_encoded[col] = st.session_state.user_input[col]
+        input_df = pd.DataFrame([input_encoded], columns=categorical_cols + numeric_cols_manual + numeric_cols_other + ["Building_Age"])
+        prediction = model.predict(input_df)[0]
+        st.success(f"{prediction:,.2f} INR")
+    else:
+        st.warning("Please select/fill all required fields above to see prediction.")
+
+# -----------------------------
+# Function to create charts dynamically
 def create_charts(user_input):
     # Bar Chart
     features_plot = ['Interior_SqFt', 'Num_Bedrooms', 'Num_Bathrooms', 'Total_Rooms']
@@ -108,93 +107,85 @@ def create_charts(user_input):
     ax_radar.set_yticks([1, 3, 5])
     ax_radar.set_yticklabels(["Low", "Medium", "High"])
     plt.tight_layout()
-
     return fig_bar, fig_radar
 
-fig_bar, fig_radar = create_charts(user_input)
-st.pyplot(fig_bar, clear_figure=True)
-st.pyplot(fig_radar, clear_figure=True)
+# -----------------------------
+# Page: Charts
+if page == "Charts":
+    input_section()
+    if validate_inputs(st.session_state.user_input):
+        fig_bar, fig_radar = create_charts(st.session_state.user_input)
+        st.pyplot(fig_bar, clear_figure=True)
+        st.pyplot(fig_radar, clear_figure=True)
+    else:
+        st.warning("Please fill all inputs to see charts.")
 
 # -----------------------------
-# Generate professional PDF
-def generate_professional_pdf(user_input, predicted_price, bar_fig, radar_fig):
-    pdf = FPDF('P', 'mm', 'A4')
-    pdf.add_page()
+# Page: Insights
+if page == "Insights":
+    input_section()
+    st.subheader("📈 Insights & Suggestions")
+    if validate_inputs(st.session_state.user_input):
+        # Example insights
+        st.write(f"- The predicted price for this property is influenced by **{st.session_state.user_input['Interior_SqFt']} sq.ft** interior, {st.session_state.user_input['Num_Bedrooms']} bedrooms, and {st.session_state.user_input['Num_Bathrooms']} bathrooms.")
+        st.write("- Quality scores suggest areas for improvement:")
+        for score in ['Quality_Score_Rooms', 'Quality_Score_Bathroom', 'Quality_Score_Bedroom', 'Quality_Score_Overall']:
+            st.write(f"  - {score}: {st.session_state.user_input[score]}")
+        st.write("- Properties closer to main road tend to have higher accessibility and market value.")
+        st.write("- Ensure registration fees and commission align with local market trends.")
+    else:
+        st.warning("Please fill all inputs to see insights.")
 
-    # Header
-    pdf.set_font("Arial", "B", 16)
-    pdf.cell(0, 10, "Sunrise Property Valuation Agency", ln=True, align="C")
-    pdf.set_font("Arial", "", 11)
-    pdf.cell(0, 5, "123 Real Estate Avenue, Chennai", ln=True, align="C")
-    pdf.cell(0, 5, "Phone: +91-98765-43210 | Email: contact@sunriseval.com", ln=True, align="C")
-    pdf.ln(5)
+# -----------------------------
+# Page: Report
+if page == "Report":
+    input_section()
+    st.subheader("📄 Generate Professional PDF Report")
+    if validate_inputs(st.session_state.user_input):
+        fig_bar, fig_radar = create_charts(st.session_state.user_input)
 
-    pdf.set_font("Arial", "B", 14)
-    pdf.cell(0, 8, "Chennai House Valuation Report", ln=True, align="C")
-    pdf.ln(3)
-    pdf.set_font("Arial", "", 11)
-    pdf.cell(0, 5, f"Report Date: {datetime.now().strftime('%d-%m-%Y')}", ln=True)
-    pdf.ln(5)
+        def generate_pdf(user_input, bar_fig, radar_fig):
+            pdf = FPDF('P', 'mm', 'A4')
+            pdf.add_page()
+            pdf.set_font("Arial", "B", 16)
+            pdf.cell(0, 10, "Sunrise Property Valuation Agency", ln=True, align="C")
+            pdf.set_font("Arial", "", 11)
+            pdf.cell(0, 5, "Professional House Valuation Report", ln=True, align="C")
+            pdf.ln(5)
+            # Property info
+            pdf.set_font("Arial", "B", 12)
+            pdf.cell(0, 6, "Property Information", ln=True)
+            pdf.set_font("Arial", "", 11)
+            for k, v in user_input.items():
+                pdf.cell(60, 6, f"{k}", border=1)
+                pdf.cell(0, 6, f"{v}", border=1, ln=True)
+            pdf.ln(4)
+            # Charts
+            for fig, width in zip([bar_fig, radar_fig], [170, 130]):
+                tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+                fig.savefig(tmp_file.name, dpi=180, bbox_inches='tight')
+                tmp_file.close()
+                pdf.image(tmp_file.name, x=20, w=width)
+                os.unlink(tmp_file.name)
+                pdf.ln(5)
+            # Footer
+            pdf.set_y(-20)
+            pdf.set_font("Arial", "I", 10)
+            pdf.cell(0, 6, "Sunrise Property Valuation Agency", align="C")
+            temp_pdf = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+            pdf.output(temp_pdf.name)
+            temp_pdf.seek(0)
+            with open(temp_pdf.name, "rb") as f:
+                pdf_bytes = f.read()
+            os.unlink(temp_pdf.name)
+            return pdf_bytes
 
-    # Property Information Box
-    pdf.set_font("Arial", "B", 12)
-    pdf.cell(0, 6, "Property Information", ln=True)
-    pdf.set_font("Arial", "", 11)
-    for k, v in user_input.items():
-        pdf.cell(60, 6, f"{k}", border=1)
-        pdf.cell(0, 6, f"{v}", border=1, ln=True)
-    pdf.ln(4)
-
-    # Predicted Price
-    pdf.set_font("Arial", "B", 12)
-    pdf.cell(0, 6, f"Predicted Market Value: {predicted_price:,.2f} INR", ln=True)
-    pdf.ln(4)
-
-    # Description / Suggestions
-    pdf.set_font("Arial", "", 11)
-    description = (
-        "This valuation report is generated based on selected property features.\n\n"
-        "The predicted price represents an estimated market value considering property size, quality, "
-        "location, and sale conditions.\n\n"
-        "Suggestions:\n"
-        "- Ensure property condition matches the quality scores.\n"
-        "- Consider local market trends and amenities when finalizing pricing.\n"
-        "- Registration fee and commission are typical estimates.\n"
-        "- Distance to main road can influence accessibility and valuation."
-    )
-    pdf.multi_cell(0, 6, description)
-    pdf.ln(4)
-
-    # Insert charts
-    for fig, width in zip([bar_fig, radar_fig], [170, 130]):
-        tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
-        fig.savefig(tmp_file.name, dpi=180, bbox_inches='tight')
-        tmp_file.close()
-        pdf.image(tmp_file.name, x=20, w=width)
-        os.unlink(tmp_file.name)
-        pdf.ln(5)
-
-    # Footer
-    pdf.set_y(-20)
-    pdf.set_font("Arial", "I", 10)
-    pdf.cell(0, 6, "Sunrise Property Valuation Agency - www.sunriseval.com", align="C")
-
-    temp_pdf = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
-    pdf.output(temp_pdf.name)
-    temp_pdf.seek(0)
-    with open(temp_pdf.name, "rb") as f:
-        pdf_bytes = f.read()
-    os.unlink(temp_pdf.name)
-    return pdf_bytes
-
-# Generate PDF
-pdf_bytes = generate_professional_pdf(user_input, prediction, fig_bar, fig_radar)
-
-# Download button
-st.subheader("📄 Download Professional Valuation Report")
-st.download_button(
-    label="Download PDF Report",
-    data=pdf_bytes,
-    file_name=f"HouseValuation_Report_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
-    mime="application/pdf"
-)
+        pdf_bytes = generate_pdf(st.session_state.user_input, fig_bar, fig_radar)
+        st.download_button(
+            label="Download PDF Report",
+            data=pdf_bytes,
+            file_name=f"HouseValuation_Report_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
+            mime="application/pdf"
+        )
+    else:
+        st.warning("Please fill all inputs before generating report.")
