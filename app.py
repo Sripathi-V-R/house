@@ -9,20 +9,24 @@ from datetime import datetime
 import tempfile
 
 # -----------------------------
-# Load artifacts
+# Paths
 MODEL_PATH = "catboost_model.pkl"
 ENCODERS_PATH = "label_encoders.pkl"
-SCALER_PATH = "scaler.pkl"
-DATA_PATH = "preprocessed.csv"
+PREPROCESSED_PATH = "preprocessed.csv"  # Raw dataset before encoding
 
+# -----------------------------
+# Load artifacts
 model = joblib.load(MODEL_PATH)
 label_encoders = joblib.load(ENCODERS_PATH)
-scaler = joblib.load(SCALER_PATH)
-data = pd.read_csv(DATA_PATH)
+
+# Load raw dataset
+raw_data = pd.read_csv(PREPROCESSED_PATH)
 
 st.set_page_config(page_title="Chennai House Price Prediction", layout="wide")
 st.title("🏠 Chennai House Price Prediction")
 
+# -----------------------------
+# Feature columns
 categorical_cols = ['Locality', 'Sale_Condition', 'Parking_Facility', 
                     'Building_Type', 'Utilities_Available', 'Street_Type', 'Zoning_Type']
 
@@ -31,83 +35,126 @@ numeric_cols = ['Interior_SqFt', 'Distance_To_Main_Road', 'Num_Bedrooms', 'Num_B
                 'Quality_Score_Bedroom', 'Quality_Score_Overall', 'Registration_Fee', 
                 'Commission', 'Sale_Year', 'Build_Year', 'Building_Age']
 
-# Sidebar inputs for categorical features
+# -----------------------------
+# Sidebar inputs
+st.sidebar.header("🏠 House Details Input")
 user_input = {}
+
+# Use unique values from raw dataset for options
 for col in categorical_cols:
-    options = data[col].unique().tolist()
+    options = raw_data[col].unique().tolist()
     user_input[col] = st.sidebar.selectbox(col, options)
 
-# Numeric inputs
 for col in numeric_cols:
-    default = int(data[col].median())
-    user_input[col] = st.number_input(col, value=default)
+    default = int(raw_data[col].median())
+    user_input[col] = st.sidebar.number_input(col, value=default)
 
+# -----------------------------
 # Encode categorical features
-for col in categorical_cols:
-    le = label_encoders[col]
-    user_input[col] = le.transform([user_input[col]])[0]
+input_encoded = {col: label_encoders[col].transform([user_input[col]])[0] for col in categorical_cols}
 
-# Prepare DataFrame
-input_df = pd.DataFrame([user_input], columns=categorical_cols + numeric_cols)
+# Merge numeric inputs (no scaling)
+for col in numeric_cols:
+    input_encoded[col] = user_input[col]
 
-# Scale features
-input_scaled = scaler.transform(input_df)
+# Prepare input dataframe
+input_df = pd.DataFrame([input_encoded], columns=categorical_cols + numeric_cols)
 
-# Prediction
-if st.button("Predict Sale Price"):
-    try:
-        prediction = model.predict(input_scaled)
-        predicted_price = prediction[0]
-        st.success(f"Predicted House Price: {predicted_price:,.2f} INR")
+# -----------------------------
+# Predict continuously
+prediction = model.predict(input_df)[0]
 
-        # Generate textual report
-        report = f"""
-House Sale Report - Chennai
+# -----------------------------
+# Display prediction
+st.subheader("💰 Predicted House Price")
+st.success(f"{prediction:,.2f} INR")
 
-Area: {user_input['Locality']}
-Interior SqFt: {user_input['Interior_SqFt']}
-Bedrooms: {user_input['Num_Bedrooms']}, Bathrooms: {user_input['Num_Bathrooms']}, Rooms: {user_input['Total_Rooms']}
-Building Type: {user_input['Building_Type']}, Park Facility: {user_input['Parking_Facility']}
-Quality Scores - Rooms: {user_input['Quality_Score_Rooms']}, Bathroom: {user_input['Quality_Score_Bathroom']}, Bedroom: {user_input['Quality_Score_Bedroom']}, Overall: {user_input['Quality_Score_Overall']}
-Registration Fee: {user_input['Registration_Fee']}, Commission: {user_input['Commission']}
-Sale Year: {user_input['Sale_Year']}, Build Year: {user_input['Build_Year']}, Building Age: {user_input['Building_Age']}
+# -----------------------------
+# Feature bar chart
+st.subheader("🏘️ House Features Overview")
+features_plot = ['Interior_SqFt', 'Num_Bedrooms', 'Num_Bathrooms', 'Total_Rooms']
+values_plot = [user_input[f] for f in features_plot]
 
-Predicted House Price: {predicted_price:,.2f} INR
-"""
+fig, ax = plt.subplots(figsize=(8, 4))
+ax.bar(features_plot, values_plot, color='skyblue')
+ax.set_ylabel("Value")
+ax.set_title("Key House Features")
+plt.tight_layout()
+st.pyplot(fig)
 
-        # Generate bar chart
-        fig, ax = plt.subplots(figsize=(8, 4))
-        features_plot = ['Interior_SqFt', 'Num_Bedrooms', 'Num_Bathrooms', 'Total_Rooms']
-        values_plot = [user_input[f] for f in features_plot]
-        ax.bar(features_plot, values_plot, color='skyblue')
-        ax.set_title("House Features Overview")
-        plt.tight_layout()
-        img_buf = io.BytesIO()
-        plt.savefig(img_buf, format='png', dpi=180)
-        plt.close(fig)
-        img_buf.seek(0)
+# -----------------------------
+# Radar chart for quality scores
+st.subheader("📊 Quality Scores Radar")
+quality_scores = ['Quality_Score_Rooms', 'Quality_Score_Bathroom', 'Quality_Score_Bedroom', 'Quality_Score_Overall']
+scores = [user_input[q] for q in quality_scores]
 
-        # Generate PDF report
-        pdf = FPDF()
-        pdf.add_page()
-        pdf.set_font("Arial", "B", 16)
-        pdf.cell(0, 10, "Chennai House Price Prediction Report", ln=True, align="C")
-        pdf.set_font("Arial", "", 12)
-        pdf.multi_cell(0, 8, report)
-        pdf.ln(4)
-        pdf.image(img_buf, x=30, w=150)
-        temp_pdf = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
-        pdf.output(temp_pdf.name)
-        temp_pdf.seek(0)
-        with open(temp_pdf.name, "rb") as f:
-            pdf_bytes = f.read()
+angles = np.linspace(0, 2 * np.pi, len(scores), endpoint=False).tolist()
+scores += scores[:1]  # Close the loop
+angles += angles[:1]
 
-        st.download_button(
-            label="📄 Download PDF Report",
-            data=pdf_bytes,
-            file_name=f"HousePrice_Report_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
-            mime="application/pdf"
-        )
+fig2, ax2 = plt.subplots(figsize=(5, 5), subplot_kw=dict(polar=True))
+ax2.plot(angles, scores, 'o-', linewidth=2)
+ax2.fill(angles, scores, alpha=0.25)
+ax2.set_xticks(angles[:-1])
+ax2.set_xticklabels(quality_scores)
+ax2.set_yticks([1, 3, 5])
+ax2.set_yticklabels(["Low", "Medium", "High"])
+st.pyplot(fig2)
 
-    except Exception as e:
-        st.error(f"Error during prediction: {e}")
+# -----------------------------
+# Generate PDF report using built-in fonts
+def generate_pdf(user_input, predicted_price, bar_fig, radar_fig):
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", "B", 16)
+    pdf.cell(0, 10, "Chennai House Price Prediction Report", ln=True, align="C")
+    pdf.ln(4)
+    
+    # House details
+    pdf.set_font("Arial", "B", 12)
+    pdf.cell(0, 8, "House Details:", ln=True)
+    pdf.set_font("Arial", "", 12)
+    for k, v in user_input.items():
+        pdf.multi_cell(0, 7, f"{k}: {v}")
+    pdf.ln(2)
+    
+    # Predicted price
+    pdf.set_font("Arial", "B", 12)
+    pdf.cell(0, 8, f"Predicted House Price: {predicted_price:,.2f} INR", ln=True)
+    
+    # Insert bar chart
+    buf_bar = io.BytesIO()
+    bar_fig.savefig(buf_bar, format='PNG', dpi=180, bbox_inches='tight')
+    buf_bar.seek(0)
+    pdf.ln(4)
+    pdf.image(buf_bar, x=20, w=170)
+    
+    # Insert radar chart
+    buf_radar = io.BytesIO()
+    radar_fig.savefig(buf_radar, format='PNG', dpi=180, bbox_inches='tight')
+    buf_radar.seek(0)
+    pdf.ln(4)
+    pdf.image(buf_radar, x=40, w=130)
+    
+    # Footer
+    pdf.ln(5)
+    pdf.set_font("Arial", "I", 10)
+    pdf.multi_cell(0, 6, "This is an auto-generated report for reference purposes only.")
+    
+    temp_pdf = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+    pdf.output(temp_pdf.name)
+    temp_pdf.seek(0)
+    with open(temp_pdf.name, "rb") as f:
+        pdf_bytes = f.read()
+    return pdf_bytes
+
+pdf_bytes = generate_pdf(user_input, prediction, fig, fig2)
+
+# -----------------------------
+st.subheader("📄 Download Report")
+st.download_button(
+    label="Download PDF Report",
+    data=pdf_bytes,
+    file_name=f"HousePrice_Report_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
+    mime="application/pdf"
+)
