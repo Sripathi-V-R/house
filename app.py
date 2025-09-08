@@ -79,33 +79,40 @@ for i, (k, v) in enumerate(user_input.items()):
         st.write(f"**{k}:** {v}")
 
 # -----------------------------
-# Charts
-st.subheader("Property Feature Charts")
+# Section for charts
+st.subheader("📊 Charts - Feature Overview and Quality Scores")
 
-# Bar Chart
-features_plot = ['Interior_SqFt', 'Num_Bedrooms', 'Num_Bathrooms', 'Total_Rooms']
-values_plot = [user_input[f] for f in features_plot]
+def create_charts(user_input):
+    # Bar Chart
+    features_plot = ['Interior_SqFt', 'Num_Bedrooms', 'Num_Bathrooms', 'Total_Rooms']
+    values_plot = [user_input[f] for f in features_plot]
 
-fig_bar, ax_bar = plt.subplots(figsize=(8, 4))
-ax_bar.bar(features_plot, values_plot, color='dodgerblue')
-ax_bar.set_ylabel("Value")
-ax_bar.set_title("Key House Features")
+    fig_bar, ax_bar = plt.subplots(figsize=(8, 4))
+    ax_bar.bar(features_plot, values_plot, color='dodgerblue')
+    ax_bar.set_ylabel("Value")
+    ax_bar.set_title("Key House Features")
+    plt.tight_layout()
+
+    # Radar Chart
+    quality_scores = ['Quality_Score_Rooms', 'Quality_Score_Bathroom', 'Quality_Score_Bedroom', 'Quality_Score_Overall']
+    scores = [user_input[q] for q in quality_scores]
+    angles = np.linspace(0, 2 * np.pi, len(scores), endpoint=False).tolist()
+    scores += scores[:1]
+    angles += angles[:1]
+
+    fig_radar, ax_radar = plt.subplots(figsize=(5, 5), subplot_kw=dict(polar=True))
+    ax_radar.plot(angles, scores, 'o-', linewidth=2, color='green')
+    ax_radar.fill(angles, scores, alpha=0.25, color='green')
+    ax_radar.set_xticks(angles[:-1])
+    ax_radar.set_xticklabels(quality_scores)
+    ax_radar.set_yticks([1, 3, 5])
+    ax_radar.set_yticklabels(["Low", "Medium", "High"])
+    plt.tight_layout()
+
+    return fig_bar, fig_radar
+
+fig_bar, fig_radar = create_charts(user_input)
 st.pyplot(fig_bar, clear_figure=True)
-
-# Radar Chart
-quality_scores = ['Quality_Score_Rooms', 'Quality_Score_Bathroom', 'Quality_Score_Bedroom', 'Quality_Score_Overall']
-scores = [user_input[q] for q in quality_scores]
-angles = np.linspace(0, 2 * np.pi, len(scores), endpoint=False).tolist()
-scores += scores[:1]
-angles += angles[:1]
-
-fig_radar, ax_radar = plt.subplots(figsize=(5, 5), subplot_kw=dict(polar=True))
-ax_radar.plot(angles, scores, 'o-', linewidth=2, color='green')
-ax_radar.fill(angles, scores, alpha=0.25, color='green')
-ax_radar.set_xticks(angles[:-1])
-ax_radar.set_xticklabels(quality_scores)
-ax_radar.set_yticks([1, 3, 5])
-ax_radar.set_yticklabels(["Low", "Medium", "High"])
 st.pyplot(fig_radar, clear_figure=True)
 
 # -----------------------------
