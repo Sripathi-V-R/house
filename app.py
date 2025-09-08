@@ -23,7 +23,7 @@ raw_data = pd.read_csv(PREPROCESSED_PATH)
 # -----------------------------
 # Streamlit layout
 st.set_page_config(page_title="Chennai House Price Prediction", layout="wide")
-st.title("Chennai House Price Prediction - Valuation Report")
+st.title("🏠 Chennai House Price Prediction - Valuation Report")
 
 categorical_cols = ['Locality', 'Sale_Condition', 'Parking_Facility', 
                     'Building_Type', 'Utilities_Available', 'Street_Type', 'Zoning_Type']
@@ -52,7 +52,7 @@ for col in manual_numeric_cols:
 for col in other_numeric_cols:
     user_input[col] = st.sidebar.number_input(col, value=int(raw_data[col].median()), key=col)
 
-# Building Age
+# Calculate building age
 user_input['Building_Age'] = user_input['Sale_Year'] - user_input['Build_Year']
 
 # -----------------------------
@@ -68,7 +68,7 @@ prediction = model.predict(input_df)[0]
 
 # -----------------------------
 # Display prediction
-st.subheader("Predicted House Price")
+st.subheader("💰 Predicted House Price")
 st.success(f"{prediction:,.2f} INR")
 
 # Display selected inputs side by side
@@ -108,18 +108,9 @@ ax_radar.set_yticks([1, 3, 5])
 ax_radar.set_yticklabels(["Low", "Medium", "High"])
 st.pyplot(fig_radar, clear_figure=True)
 
-# Optional: Pie chart for room distribution
-st.subheader("Room Distribution")
-rooms = [user_input['Num_Bedrooms'], user_input['Num_Bathrooms'], user_input['Total_Rooms'] - (user_input['Num_Bedrooms'] + user_input['Num_Bathrooms'])]
-labels = ['Bedrooms', 'Bathrooms', 'Other Rooms']
-fig_pie, ax_pie = plt.subplots()
-ax_pie.pie(rooms, labels=labels, autopct='%1.1f%%', colors=['skyblue', 'orange', 'lightgreen'])
-ax_pie.set_title("Room Distribution")
-st.pyplot(fig_pie, clear_figure=True)
-
 # -----------------------------
-# PDF Report
-def generate_professional_pdf(user_input, predicted_price, bar_fig, radar_fig, pie_fig):
+# Generate professional PDF
+def generate_professional_pdf(user_input, predicted_price, bar_fig, radar_fig):
     pdf = FPDF('P', 'mm', 'A4')
     pdf.add_page()
 
@@ -130,23 +121,24 @@ def generate_professional_pdf(user_input, predicted_price, bar_fig, radar_fig, p
     pdf.cell(0, 5, "123 Real Estate Avenue, Chennai", ln=True, align="C")
     pdf.cell(0, 5, "Phone: +91-98765-43210 | Email: contact@sunriseval.com", ln=True, align="C")
     pdf.ln(5)
+
     pdf.set_font("Arial", "B", 14)
     pdf.cell(0, 8, "Chennai House Valuation Report", ln=True, align="C")
-    pdf.ln(2)
+    pdf.ln(3)
     pdf.set_font("Arial", "", 11)
     pdf.cell(0, 5, f"Report Date: {datetime.now().strftime('%d-%m-%Y')}", ln=True)
     pdf.ln(5)
 
-    # Property Information
+    # Property Information Box
     pdf.set_font("Arial", "B", 12)
     pdf.cell(0, 6, "Property Information", ln=True)
     pdf.set_font("Arial", "", 11)
     for k, v in user_input.items():
         pdf.cell(60, 6, f"{k}", border=1)
         pdf.cell(0, 6, f"{v}", border=1, ln=True)
-    pdf.ln(3)
+    pdf.ln(4)
 
-    # Predicted Price Section
+    # Predicted Price
     pdf.set_font("Arial", "B", 12)
     pdf.cell(0, 6, f"Predicted Market Value: {predicted_price:,.2f} INR", ln=True)
     pdf.ln(4)
@@ -164,10 +156,10 @@ def generate_professional_pdf(user_input, predicted_price, bar_fig, radar_fig, p
         "- Distance to main road can influence accessibility and valuation."
     )
     pdf.multi_cell(0, 6, description)
-    pdf.ln(3)
+    pdf.ln(4)
 
     # Insert charts
-    for fig, width in zip([bar_fig, radar_fig, pie_fig], [170, 130, 150]):
+    for fig, width in zip([bar_fig, radar_fig], [170, 130]):
         tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
         fig.savefig(tmp_file.name, dpi=180, bbox_inches='tight')
         tmp_file.close()
@@ -189,10 +181,10 @@ def generate_professional_pdf(user_input, predicted_price, bar_fig, radar_fig, p
     return pdf_bytes
 
 # Generate PDF
-pdf_bytes = generate_professional_pdf(user_input, prediction, fig_bar, fig_radar, fig_pie)
+pdf_bytes = generate_professional_pdf(user_input, prediction, fig_bar, fig_radar)
 
 # Download button
-st.subheader("Download Professional Valuation Report")
+st.subheader("📄 Download Professional Valuation Report")
 st.download_button(
     label="Download PDF Report",
     data=pdf_bytes,
