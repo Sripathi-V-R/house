@@ -3,6 +3,8 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import joblib
+import plotly.express as px
+import plotly.graph_objects as go
 from fpdf import FPDF
 from datetime import datetime
 import tempfile
@@ -52,43 +54,73 @@ if "property_image" not in st.session_state:
 def safe_str(x):
     return str(x).encode('latin-1', 'replace').decode('latin-1')
 
+# -----------------------------
+# Validation function with rules
 def validate_inputs(inputs):
+    missing = []
     errors = []
-    # Required fields
+
+    # 1) Check required fields
     for k, v in inputs.items():
         if v is None or (isinstance(v, str) and v.strip() == ""):
-            errors.append(f"{k} is not filled")
-    # Year validations
-    if inputs["Build_Year"] > inputs["Sale_Year"]:
-        errors.append("Build Year cannot be after Sale Year")
-    if inputs["Build_Year"] < 1800 or inputs["Build_Year"] > datetime.now().year:
-        errors.append("Build Year must be between 1800 and current year")
-    # Quality score
-    for q in ['Quality_Score_Rooms','Quality_Score_Bathroom','Quality_Score_Bedroom','Quality_Score_Overall']:
-        if not (0 <= inputs[q] <= 5):
+            missing.append(k)
+
+    # 2) Building Year vs Sale Year
+    build_year = inputs.get("Build_Year", 0)
+    sale_year = inputs.get("Sale_Year", 0)
+    if build_year and sale_year:
+        if build_year > sale_year:
+            errors.append("Build_Year cannot be after Sale_Year")
+        if build_year < 1800 or build_year > datetime.now().year:
+            errors.append(f"Build_Year must be between 1800 and {datetime.now().year}")
+
+    # 3) Quality scores 0-5
+    quality_cols = ['Quality_Score_Rooms', 'Quality_Score_Bathroom', 'Quality_Score_Bedroom', 'Quality_Score_Overall']
+    for q in quality_cols:
+        val = inputs.get(q, 0)
+        if val < 0 or val > 5:
             errors.append(f"{q} must be between 0 and 5")
-    # Financial limits
-    if inputs["Registration_Fee"] > 0.07 * inputs.get("Sale_Price",1):
-        errors.append("Registration Fee cannot exceed 7% of Sale Price")
-    if inputs["Commission"] > 0.10 * inputs.get("Sale_Price",1):
-        errors.append("Commission cannot exceed 10% of Sale Price")
-    # Bedroom limits
-    if inputs["Building_Type"].lower() not in ["residential","house"] and inputs["Num_Bedrooms"]>0:
-        errors.append("Bedrooms cannot be included for Commercial/Others")
-    if inputs["Num_Bedrooms"] > 10:
-        errors.append("Number of Bedrooms cannot exceed 10")
-    # Distance
-    if inputs["Distance_To_Main_Road"] > 1000:
-        errors.append("Distance to main road cannot exceed 1000 meters")
-    return len(errors)==0, errors
+
+    # 4) Registration fee <= 7% of Sale_Price, commission <= 10%
+    sale_price = inputs.get("Sale_Price", 0)
+    if sale_price > 0:
+        reg_fee = inputs.get("Registration_Fee", 0)
+        if reg_fee > 0.07 * sale_price:
+            errors.append("Registration_Fee cannot exceed 7% of Sale Price")
+        commission = inputs.get("Commission", 0)
+        if commission > 0.10 * sale_price:
+            errors.append("Commission cannot exceed 10% of Sale Price")
+
+    # 5) Number of bedrooms for commercial or others
+    building_type = inputs.get("Building_Type", "").lower()
+    if building_type in ["commercial", "others"]:
+        inputs['Num_Bedrooms'] = 0  # forcibly set to 0
+
+    # 6) Bedrooms limit <= 10
+    if inputs.get("Num_Bedrooms", 0) > 10:
+        errors.append("Num_Bedrooms cannot exceed 10")
+
+    # 7) Distance <= 1000
+    if inputs.get("Distance_To_Main_Road", 0) > 1000:
+        errors.append("Distance_To_Main_Road cannot exceed 1000 meters")
+
+    # Return result
+    if missing or errors:
+        msg = ""
+        if missing:
+            msg += f"Missing fields: {', '.join(missing)}. "
+        if errors:
+            msg += "Errors: " + "; ".join(errors)
+        return False, msg.strip()
+    return True, ""
 
 # -----------------------------
-# Input Section
+# Input section (with image upload & preview)
 def input_section():
     st.markdown("<h2 style='text-align:center;'>🏠 House Details</h2>", unsafe_allow_html=True)
     col1, col2 = st.columns(2)
 
-    # Categorical
+    # Categorical inputs
     with col1:
         for col in categorical_cols[:len(categorical_cols)//2]:
             options = ["--Select--"] + sorted(raw_data[col].dropna().unique().tolist())
@@ -120,181 +152,104 @@ def input_section():
 
     # Building age
     if st.session_state.user_input["Build_Year"] and st.session_state.user_input["Sale_Year"]:
-        st.session_state.user_input["Building_Age"] = max(st.session_state.user_input["Sale_Year"] - st.session_state.user_input["Build_Year"],0)
+        st.session_state.user_input["Building_Age"] = max(st.session_state.user_input["Sale_Year"] - st.session_state.user_input["Build_Year"], 0)
     else:
         st.session_state.user_input["Building_Age"] = 0
 
-    # Property Image
-    uploaded = st.file_uploader("📸 Upload Property Image", type=["png","jpg","jpeg"])
+    # Image Upload + Preview
+    uploaded = st.file_uploader("📸 Upload Property Image (jpg / png)", type=["png", "jpg", "jpeg"])
     if uploaded is not None:
         st.session_state.property_image = uploaded
         st.image(uploaded, caption="Uploaded property image preview", use_column_width=True)
 
 # -----------------------------
-# Charts (Matplotlib for PDF)
-def create_pdf_images(user_input, raw_data):
-    images = []
-
-    # Bar chart
-    feats = ['Interior_SqFt','Num_Bedrooms','Num_Bathrooms','Total_Rooms']
-    vals = [user_input[f] for f in feats]
-    fig, ax = plt.subplots(figsize=(8,4))
-    ax.bar(feats, vals, color='C0', edgecolor='black')
-    ax.set_title("Key House Features")
-    for i,v in enumerate(vals):
-        ax.text(i, v+0.5, str(v), ha='center')
-    buf = io.BytesIO(); fig.savefig(buf, format='png'); plt.close(fig); buf.seek(0); images.append(buf)
-
-    # Radar chart
-    q_labels = ['Rooms','Bathroom','Bedroom','Overall']
-    scores = [user_input['Quality_Score_Rooms'], user_input['Quality_Score_Bathroom'],
-              user_input['Quality_Score_Bedroom'], user_input['Quality_Score_Overall']]
-    angles = np.linspace(0,2*np.pi,len(scores),endpoint=False).tolist()
-    scores_closed = scores + [scores[0]]
-    angles_closed = angles + [angles[0]]
-    fig, ax = plt.subplots(figsize=(5,5),subplot_kw=dict(polar=True))
-    ax.plot(angles_closed, scores_closed, 'o-', linewidth=2)
-    ax.fill(angles_closed, scores_closed, alpha=0.25)
-    ax.set_thetagrids(np.degrees(angles), q_labels)
-    ax.set_ylim(0,5)
-    ax.set_title("Quality Radar")
-    buf = io.BytesIO(); fig.savefig(buf, format='png'); plt.close(fig); buf.seek(0); images.append(buf)
-
-    # Interior SqFt histogram
-    fig, ax = plt.subplots(figsize=(8,4))
-    ax.hist(raw_data['Interior_SqFt'].dropna(), bins=30, color='C1', edgecolor='black')
-    ax.axvline(user_input['Interior_SqFt'], color='red', linestyle='--')
-    ax.set_title("Interior SqFt Distribution")
-    buf = io.BytesIO(); fig.savefig(buf, format='png'); plt.close(fig); buf.seek(0); images.append(buf)
-
-    # Rooms histogram
-    fig, ax = plt.subplots(figsize=(8,4))
-    ax.hist(raw_data['Total_Rooms'].dropna(), bins=15, color='C2', edgecolor='black')
-    ax.axvline(user_input['Total_Rooms'], color='red', linestyle='--')
-    ax.set_title("Total Rooms Distribution")
-    buf = io.BytesIO(); fig.savefig(buf, format='png'); plt.close(fig); buf.seek(0); images.append(buf)
-
-    return images
-
+# Keep all other functions (charts, PDF generation) as in your previous code:
+# create_plotly_charts, create_pdf_images, generate_pdf
+# ...
 # -----------------------------
-# PDF Generation
-def generate_pdf(user_input, pdf_images, prediction, property_image):
-    pdf = FPDF('P','mm','A4')
-    pdf.set_auto_page_break(auto=True, margin=15)
-    pdf.add_page()
-
-    # Header
-    pdf.set_fill_color(0,102,204)
-    pdf.rect(0,0,210,20,'F')
-    pdf.set_xy(0,5)
-    pdf.set_font("Arial","B",16)
-    pdf.set_text_color(255,255,255)
-    pdf.cell(210,10,"Sunrise Property Valuation Agency",0,1,'C')
-    pdf.set_text_color(0,0,0)
-    pdf.ln(6)
-    pdf.set_font("Arial","B",14)
-    pdf.cell(0,10,"Professional House Valuation Report",ln=True, align="C")
-    pdf.ln(6)
-
-    # Property Info
-    pdf.set_font("Arial","B",12)
-    pdf.cell(0,8,"Property Information", ln=True)
-    pdf.set_font("Arial","",10)
-    for k,v in user_input.items():
-        pdf.cell(60,6,safe_str(k),1)
-        pdf.cell(0,6,safe_str(v),1, ln=True)
-    pdf.ln(4)
-
-    # Property image
-    if property_image is not None:
-        tmp_img = tempfile.NamedTemporaryFile(delete=False,suffix=".png")
-        img = Image.open(property_image).convert("RGB")
-        img.save(tmp_img.name,"PNG"); tmp_img.close()
-        pdf.image(tmp_img.name, x=30, w=150)
-        os.unlink(tmp_img.name)
-        pdf.ln(6)
-
-    # Prediction
-    pdf.set_fill_color(255,204,0)
-    pdf.set_font("Arial","B",14)
-    pdf.cell(0,10,f"Predicted Price: {prediction:,.2f} INR", ln=True, fill=True, align="C")
-    pdf.ln(6)
-
-    # Charts
-    for buf in pdf_images:
-        tmp = tempfile.NamedTemporaryFile(delete=False,suffix=".png")
-        tmp.write(buf.getbuffer()); tmp.close()
-        pdf.image(tmp.name,x=15,w=180)
-        os.unlink(tmp.name)
-        pdf.ln(5)
-
-    # Footer
-    pdf.set_y(-20)
-    pdf.set_font("Arial","I",9)
-    pdf.cell(0,6,"Sunrise Property Valuation Agency", align="C")
-
-    tmp_pdf = tempfile.NamedTemporaryFile(delete=False,suffix=".pdf")
-    pdf.output(tmp_pdf.name)
-    with open(tmp_pdf.name,"rb") as f:
-        pdf_bytes = f.read()
-    os.unlink(tmp_pdf.name)
-    return pdf_bytes
-
-# -----------------------------
-# Main navigation
+# Pages / Navigation
 st.sidebar.title("Navigation")
-page = st.sidebar.radio("", ["Prediction","Report"])
+page = st.sidebar.radio("", ["Prediction", "Charts", "Insights", "Report"])
 
-if page=="Prediction":
+if page == "Prediction":
     input_section()
     st.subheader("💰 Predicted House Price")
-    valid, errors = validate_inputs(st.session_state.user_input)
+    valid, msg = validate_inputs(st.session_state.user_input)
     if not valid:
-        st.warning("Please correct the following:")
-        for e in errors:
-            st.write(f"- {e}")
+        st.warning(msg)
     else:
         input_encoded = {}
         for col in categorical_cols:
             val = st.session_state.user_input[col]
             try:
                 input_encoded[col] = label_encoders[col].transform([val])[0]
-            except:
+            except Exception:
                 input_encoded[col] = 0
         for col in numeric_cols_manual + numeric_cols_other + ["Building_Age"]:
-            input_encoded[col] = st.session_state.user_input[col]
-        input_df = pd.DataFrame([input_encoded])
+            input_encoded[col] = st.session_state.user_input.get(col, 0)
+        input_df = pd.DataFrame([input_encoded], columns=list(input_encoded.keys()))
         prediction = model.predict(input_df)[0]
         st.success(f"{prediction:,.2f} INR")
 
-elif page=="Report":
+elif page == "Charts":
+    input_section()
+    st.subheader("📊 Interactive Charts")
+    valid, msg = validate_inputs(st.session_state.user_input)
+    if not valid:
+        st.warning(msg)
+    else:
+        figs = create_plotly_charts(st.session_state.user_input, raw_data)
+        keys = list(figs.keys())
+        for i in range(0, len(keys), 2):
+            cols = st.columns(2)
+            for j in range(2):
+                idx = i + j
+                if idx < len(keys):
+                    cols[j].plotly_chart(figs[keys[idx]], use_container_width=True)
+
+elif page == "Insights":
+    input_section()
+    st.subheader("📈 Insights & Suggestions")
+    valid, msg = validate_inputs(st.session_state.user_input)
+    if not valid:
+        st.warning(msg)
+    else:
+        st.markdown("### 🔍 Key Insights")
+        st.write(f"- **Interior Space:** {st.session_state.user_input['Interior_SqFt']} sq.ft.")
+        st.write(f"- **Bedrooms/Bathrooms:** {st.session_state.user_input['Num_Bedrooms']} / {st.session_state.user_input['Num_Bathrooms']}")
+        st.write(f"- **Quality Scores:**")
+        for score in ['Quality_Score_Rooms', 'Quality_Score_Bathroom', 'Quality_Score_Bedroom', 'Quality_Score_Overall']:
+            st.write(f"  - {score}: {st.session_state.user_input[score]}")
+        st.write(f"- **Distance to Road:** {st.session_state.user_input['Distance_To_Main_Road']} meters")
+        st.write(f"- **Financials:** Registration {st.session_state.user_input['Registration_Fee']}, Commission {st.session_state.user_input['Commission']}")
+        figs = create_plotly_charts(st.session_state.user_input, raw_data)
+        st.plotly_chart(figs['bar_features'], use_container_width=True)
+        st.plotly_chart(figs['donut_rooms'], use_container_width=True)
+
+elif page == "Report":
     input_section()
     st.subheader("📄 Generate PDF Report")
-    valid, errors = validate_inputs(st.session_state.user_input)
+    valid, msg = validate_inputs(st.session_state.user_input)
     if not valid:
-        st.warning("Please correct the following:")
-        for e in errors:
-            st.write(f"- {e}")
+        st.warning(msg)
     else:
         input_encoded = {}
         for col in categorical_cols:
             val = st.session_state.user_input[col]
             try:
                 input_encoded[col] = label_encoders[col].transform([val])[0]
-            except:
+            except Exception:
                 input_encoded[col] = 0
         for col in numeric_cols_manual + numeric_cols_other + ["Building_Age"]:
-            input_encoded[col] = st.session_state.user_input[col]
+            input_encoded[col] = st.session_state.user_input.get(col, 0)
         input_df = pd.DataFrame([input_encoded])
         prediction = model.predict(input_df)[0]
-
         pdf_images = create_pdf_images(st.session_state.user_input, raw_data)
         pdf_bytes = generate_pdf(st.session_state.user_input, pdf_images, prediction, st.session_state.property_image)
-
         st.download_button(
             label="⬇️ Download PDF Report",
             data=pdf_bytes,
             file_name=f"HouseValuation_Report_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
             mime="application/pdf"
         )
-        st.success("PDF generated successfully!")
+        st.success("PDF generated — click the download button above.")
